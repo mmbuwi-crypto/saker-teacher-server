@@ -75,48 +75,57 @@ app.get("/", (req, res) => {
 
 // ─── Create a teacher account ───────────────────────────────────────────────
 app.post("/create-teacher", async (req, res) => {
-  const callerId = await requireAdmin(req);
-  if (!callerId) return res.status(403).json({ error: "Only admins can create teacher accounts." });
-
-  const { name, email, password, subjects, forms } = req.body || {};
-  if (!name?.trim() || !email?.trim() || !password || password.length < 6) {
-    return res.status(400).json({ error: "Name, email, and a password of at least 6 characters are required." });
-  }
-
+  console.log("[create-teacher] request received");
   try {
-    // 1. Create the Auth account
+    const callerId = await requireAdmin(req);
+    if (!callerId) { console.log("[create-teacher] rejected — not admin"); return res.status(403).json({ error: "Only admins can create teacher accounts." }); }
+    console.log("[create-teacher] admin verified, caller:", callerId);
+
+    const { name, email, password, subjects, forms } = req.body || {};
+    if (!name?.trim() || !email?.trim() || !password || password.length < 6) {
+      console.log("[create-teacher] validation failed — missing/short fields");
+      return res.status(400).json({ error: "Name, email, and a password of at least 6 characters are required." });
+    }
+
+    console.log("[create-teacher] creating auth user for", email);
     const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
       email: email.trim(),
       password,
       email_confirm: true,
     });
-    if (createErr) return res.status(400).json({ error: "Could not create login: " + createErr.message });
+    if (createErr) { console.log("[create-teacher] createUser failed:", createErr.message); return res.status(400).json({ error: "Could not create login: " + createErr.message }); }
     const newUserId = newUser.user.id;
+    console.log("[create-teacher] auth user created:", newUserId);
 
-    // 2. Add their role row
     const { error: userRowErr } = await adminClient.from("users").insert({
       id: newUserId, email: email.trim(), name: name.trim(), role: "teacher",
     });
     if (userRowErr) {
+      console.log("[create-teacher] users insert failed:", userRowErr.message);
       await adminClient.auth.admin.deleteUser(newUserId);
       return res.status(400).json({ error: "Could not save role: " + userRowErr.message });
     }
+    console.log("[create-teacher] users row inserted");
 
-    // 3. Add their teacher profile row
     const teacherId = "TCH" + Date.now().toString().slice(-6);
     const { error: teacherRowErr } = await adminClient.from("teachers").insert({
       id: teacherId, user_id: newUserId, name: name.trim(), email: email.trim(),
       subjects: subjects||[], forms: forms||[], active: true, joined: new Date().toISOString().slice(0,10),
     });
     if (teacherRowErr) {
+      console.log("[create-teacher] teachers insert failed:", teacherRowErr.message);
       await adminClient.auth.admin.deleteUser(newUserId);
       await adminClient.from("users").delete().eq("id", newUserId);
       return res.status(400).json({ error: "Could not save teacher profile: " + teacherRowErr.message });
     }
+    console.log("[create-teacher] teachers row inserted — success, sending response");
 
-    res.json({ success: true, teacherId, userId: newUserId });
+    return res.status(200).json({ success: true, teacherId, userId: newUserId });
   } catch(e) {
-    res.status(500).json({ error: "Unexpected error: " + e.message });
+    console.log("[create-teacher] CAUGHT EXCEPTION:", e?.message || e);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: "Unexpected error: " + (e?.message || String(e)) });
+    }
   }
 });
 
