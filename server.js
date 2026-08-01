@@ -14,11 +14,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import express from "express";
-import cors from "cors";
 import { createClient } from "@supabase/supabase-js";
 
 const app = express();
-app.use(cors());
+
+// Explicit CORS handling — the default cors() package settings can behave
+// inconsistently behind Render's proxy layer, sometimes answering the
+// preflight OPTIONS request with an empty 200 that never reaches Express's
+// route handlers. Setting headers directly removes that ambiguity.
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 app.use(express.json());
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -126,6 +137,16 @@ app.post("/delete-teacher", async (req, res) => {
     res.json({ success: true });
   } catch(e) {
     res.status(500).json({ error: "Unexpected error: " + e.message });
+  }
+});
+
+// Safety net: if any route throws something not already caught, this
+// guarantees the client still gets valid, readable JSON back — never an
+// empty or malformed body that fails to parse.
+app.use((err, req, res, next) => {
+  console.error("[unhandled error]", err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: "Unexpected server error: " + (err?.message || String(err)) });
   }
 });
 
