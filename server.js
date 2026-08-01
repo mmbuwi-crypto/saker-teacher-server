@@ -30,20 +30,30 @@ const adminClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
 // Verifies the request came from a logged-in admin. Returns the caller's
 // user id if valid, or null if not — every endpoint below checks this first.
+// Logs the specific reason for any failure to Render's Logs tab, since the
+// user-facing error is intentionally generic (doesn't leak which check failed).
 async function requireAdmin(req) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace("Bearer ", "");
-  if (!token) return null;
+  if (!token) { console.log("[requireAdmin] no token in Authorization header"); return null; }
+
+  if (!SUPABASE_URL || !ANON_KEY || !SERVICE_ROLE_KEY) {
+    console.log("[requireAdmin] missing env var — URL:", !!SUPABASE_URL, "ANON_KEY:", !!ANON_KEY, "SERVICE_ROLE_KEY:", !!SERVICE_ROLE_KEY);
+    return null;
+  }
 
   const callerClient = createClient(SUPABASE_URL, ANON_KEY, {
     global: { headers: { Authorization: `Bearer ${token}` } },
   });
   const { data: { user }, error } = await callerClient.auth.getUser();
-  if (error || !user) return null;
+  if (error || !user) { console.log("[requireAdmin] getUser failed:", error?.message || "no user returned"); return null; }
+  console.log("[requireAdmin] token verified for user:", user.id, user.email);
 
   const { data: row, error: roleErr } = await adminClient
     .from("users").select("role").eq("id", user.id).single();
-  if (roleErr || row?.role !== "admin") return null;
+  if (roleErr) { console.log("[requireAdmin] users table lookup error:", roleErr.message); return null; }
+  console.log("[requireAdmin] role found:", row?.role);
+  if (row?.role !== "admin") { console.log("[requireAdmin] role is not admin, rejecting"); return null; }
 
   return user.id;
 }
